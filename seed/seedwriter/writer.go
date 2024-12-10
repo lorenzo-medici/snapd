@@ -59,6 +59,9 @@ type Options struct {
 	// IgnoreOptionFileExtentions if set, snaps and components will not be
 	// required to end in .snap or .comp, respectively.
 	IgnoreOptionFileExtentions bool
+
+	// Assertions to inject into the built image
+	AdditionalAssertions []asserts.Assertion
 }
 
 // manifest returns either the manifest already provided by the
@@ -628,6 +631,27 @@ func (w *Writer) Start(db asserts.RODatabase, f SeedAssertionFetcher) error {
 	// fetch model validation sets if any
 	if err := w.fetchValidationSets(f); err != nil {
 		return err
+	}
+
+	for _, extraAssertion := range w.opts.AdditionalAssertions {
+		// TODO:
+		// check validity and signing authority of possible injected assertions
+		// plus specific requirements for different kinds of assertions
+
+		if err := w.validateExtraAssertion(extraAssertion); err != nil {
+			return fmt.Errorf(
+				"cannot validate injected %v assertion: %v",
+				extraAssertion.Type().Name,
+				err,
+			)
+		}
+
+		if err := f.Save(extraAssertion); err != nil {
+			return fmt.Errorf(
+				"cannot fetch and check prerequisites for an injected assertion: %v",
+				err,
+			)
+		}
 	}
 
 	w.modelRefs = f.Refs()
@@ -1756,4 +1780,26 @@ func (w *Writer) UnassertedSnaps() ([]naming.SnapRef, error) {
 		res = append(res, sn.SnapRef)
 	}
 	return res, nil
+}
+
+func (w *Writer) validateExtraAssertion(extraAssertion asserts.Assertion) error {
+
+	switch extraAssertion.Type() {
+	case asserts.StoreType:
+		proxyStoreA := extraAssertion.(*asserts.Store)
+
+		if proxyStoreA.OperatorID() != w.model.AuthorityID() {
+			return fmt.Errorf(
+				"proxy store assertion contains unauthorized operator-id: %v",
+				proxyStoreA.OperatorID(),
+			)
+		}
+	default:
+		return fmt.Errorf(
+			"assertions of type %v cannot be injected",
+			extraAssertion.Type(),
+		)
+	}
+
+	return nil
 }
